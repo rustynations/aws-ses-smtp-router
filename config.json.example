@@ -1,0 +1,15 @@
+{
+  "defaultForwardTo": "you@gmail.com",
+  "domains": {
+    "example.com": {
+      "catchAll": "you@gmail.com",
+      "routes": {
+        "sales@example.com": "sales@gmail.com",
+        "support@example.com": "support@gmail.com"
+      }
+    },
+    "another-domain.com": {
+      "catchAll": "you@gmail.com"
+    }
+  }
+}
