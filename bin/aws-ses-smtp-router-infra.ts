@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { SesRouterStack } from '../lib/ses-router-stack';
 
-const configPath = path.resolve(__dirname, '../../config.json');
+const configPath = path.resolve(__dirname, '../config.json');
 
 let domains: string[] = [];
 if (fs.existsSync(configPath)) {
