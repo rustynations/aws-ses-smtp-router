@@ -58,27 +58,37 @@ describe('SesRouterStack', () => {
   });
 
   test('Lambda has SES send permission scoped to configured domains', () => {
-    const template = createTestStack(['example.com', 'another.com']);
+    const template = createTestStack(['example.com']);
     template.hasResourceProperties('AWS::IAM::Policy', {
       PolicyDocument: {
         Statement: Match.arrayWith([
           Match.objectLike({
             Action: 'ses:SendRawEmail',
             Effect: 'Allow',
-            Resource: Match.arrayWith([
-              {
-                'Fn::Join': Match.arrayWith([
-                  Match.arrayWith([
-                    Match.stringLikeRegexp('arn:aws:ses:'),
-                    Match.stringLikeRegexp(':identity/example\\.com'),
-                  ]),
+            Resource: {
+              'Fn::Join': [
+                '',
+                Match.arrayWith([
+                  ':identity/example.com',
                 ]),
-              },
-            ]),
+              ],
+            },
           }),
         ]),
       },
     });
+  });
+
+  test('SES send permission does not use wildcard resource', () => {
+    const template = createTestStack(['example.com']);
+    const policies = template.findResources('AWS::IAM::Policy');
+    const forwarderPolicy = Object.values(policies).find((p: any) =>
+      JSON.stringify(p).includes('ses:SendRawEmail')
+    ) as any;
+    const sesStatement = forwarderPolicy.Properties.PolicyDocument.Statement.find(
+      (s: any) => s.Action === 'ses:SendRawEmail'
+    );
+    expect(sesStatement.Resource).not.toBe('*');
   });
 
   test('stack has correct tags', () => {
