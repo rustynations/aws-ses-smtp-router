@@ -59,6 +59,36 @@ describe('rewriteEmail', () => {
     expect(rewritten).toMatch(/^Reply-To: alice@sender\.com/m);
   });
 
+  test('adds X-SES-Router-Forwarded header', () => {
+    expect(result).toMatch(/^X-SES-Router-Forwarded: true/m);
+  });
+
+  test('strips Bcc headers injected via From header CRLF', () => {
+    const malicious = RAW_EMAIL.replace(
+      '"Alice Sender" <alice@sender.com>',
+      '"Attacker" <evil@bad.com\r\nBcc: victim@bank.com>'
+    );
+    const rewritten = rewriteEmail({
+      rawEmail: malicious,
+      originalRecipient: 'info@example.com',
+      recipientDomain: 'example.com',
+    });
+    expect(rewritten).not.toMatch(/^Bcc:/m);
+  });
+
+  test('strips Bcc headers injected via display name CRLF', () => {
+    const malicious = RAW_EMAIL.replace(
+      '"Alice Sender" <alice@sender.com>',
+      '"Evil\r\nBcc: victim@bank.com" <alice@sender.com>'
+    );
+    const rewritten = rewriteEmail({
+      rawEmail: malicious,
+      originalRecipient: 'info@example.com',
+      recipientDomain: 'example.com',
+    });
+    expect(rewritten).not.toMatch(/^Bcc:/m);
+  });
+
   test('handles email with LF line endings', () => {
     const lfEmail = RAW_EMAIL.replace(/\r\n/g, '\n');
     const rewritten = rewriteEmail({

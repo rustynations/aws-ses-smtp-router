@@ -35,6 +35,13 @@ export async function handler(event: { Records: Array<{ ses: { mail: { messageId
   );
   const rawEmail = await emailResponse.Body!.transformToString();
 
+  // Detect forwarding loop
+  if (rawEmail.includes('X-SES-Router-Forwarded: true')) {
+    console.warn(`Email ${messageId} already forwarded by this router, deleting to prevent loop`);
+    await s3.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: emailKey }));
+    return;
+  }
+
   // Read config from S3
   const configResponse = await s3.send(
     new GetObjectCommand({ Bucket: BUCKET_NAME, Key: CONFIG_KEY })

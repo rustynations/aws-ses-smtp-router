@@ -114,6 +114,28 @@ describe('handler', () => {
     expect(s3Mock.commandCalls(DeleteObjectCommand)).toHaveLength(0);
   });
 
+  test('detects forwarding loop and deletes email', async () => {
+    const loopEmail = [
+      'From: "Test Sender" <sender@external.com>',
+      'To: info@example.com',
+      'Subject: Hello',
+      'X-SES-Router-Forwarded: true',
+      'Content-Type: text/plain',
+      '',
+      'Test body',
+    ].join('\r\n');
+    s3Mock.on(GetObjectCommand, { Key: 'emails/abc123' }).resolves({
+      Body: toSdkStream(loopEmail),
+    });
+
+    await handler(makeSesEvent('abc123', ['info@example.com']));
+
+    expect(sesMock.commandCalls(SendRawEmailCommand)).toHaveLength(0);
+    const deleteCalls = s3Mock.commandCalls(DeleteObjectCommand);
+    expect(deleteCalls).toHaveLength(1);
+    expect(deleteCalls[0].args[0].input.Key).toBe('emails/abc123');
+  });
+
   test('rejects oversized emails and deletes them from S3', async () => {
     s3Mock.on(HeadObjectCommand, { Key: 'emails/abc123' }).resolves({
       ContentLength: 15 * 1024 * 1024, // 15 MB — over 10 MB limit
