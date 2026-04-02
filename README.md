@@ -48,8 +48,8 @@ Inbound email → SES Receipt Rule → S3 → Lambda → SES Send → Gmail (or 
 
 ```bash
 # Clone and install
-git clone https://github.com/rusty428/aws-ses-smtp-router-infra.git
-cd aws-ses-smtp-router-infra
+git clone https://github.com/rusty428/aws-ses-smtp-router.git
+cd aws-ses-smtp-router
 npm install
 
 # Create your routing config
