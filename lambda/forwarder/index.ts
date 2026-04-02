@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { S3Client, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { SESClient, SendRawEmailCommand } from '@aws-sdk/client-ses';
 import { resolveRoute, type RouterConfig } from './router';
@@ -50,11 +51,23 @@ export async function handler(event: { Records: Array<{ ses: { mail: { messageId
     return;
   }
 
-  // Read config from S3
+  // Read config from S3 and verify integrity
   const configResponse = await s3.send(
     new GetObjectCommand({ Bucket: BUCKET_NAME, Key: CONFIG_KEY })
   );
-  const config: RouterConfig = JSON.parse(await configResponse.Body!.transformToString());
+  const configBody = await configResponse.Body!.transformToString();
+
+  const hashResponse = await s3.send(
+    new GetObjectCommand({ Bucket: BUCKET_NAME, Key: `${CONFIG_KEY}.sha256` })
+  );
+  const expectedHash = (await hashResponse.Body!.transformToString()).trim();
+  const actualHash = createHash('sha256').update(configBody).digest('hex');
+
+  if (actualHash !== expectedHash) {
+    throw new Error(`Config integrity check failed: expected ${expectedHash}, got ${actualHash}`);
+  }
+
+  const config: RouterConfig = JSON.parse(configBody);
 
   // Resolve route
   const forwardTo = resolveRoute(config, recipient);
