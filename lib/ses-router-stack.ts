@@ -6,6 +6,7 @@ import * as lambdaBase from 'aws-cdk-lib/aws-lambda';
 import * as ses from 'aws-cdk-lib/aws-ses';
 import * as sesActions from 'aws-cdk-lib/aws-ses-actions';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 import * as path from 'path';
 
@@ -26,10 +27,15 @@ export class SesRouterStack extends cdk.Stack {
     const bucket = new s3.Bucket(this, 'EmailBucket', {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
+      versioned: true,
       lifecycleRules: [
         {
           prefix: 'emails/',
           expiration: cdk.Duration.days(7),
+        },
+        {
+          prefix: 'config/',
+          noncurrentVersionExpiration: cdk.Duration.days(90),
         },
       ],
     });
@@ -43,8 +49,14 @@ export class SesRouterStack extends cdk.Stack {
       destinationKeyPrefix: 'config',
     });
 
+    // Dead letter queue for failed forwarding attempts
+    const dlq = new sqs.Queue(this, 'ForwarderDLQ', {
+      retentionPeriod: cdk.Duration.days(14),
+    });
+
     // Lambda forwarder
     const forwarder = new lambda.NodejsFunction(this, 'Forwarder', {
+      deadLetterQueue: dlq,
       entry: path.join(__dirname, '../lambda/forwarder/index.ts'),
       handler: 'handler',
       runtime: lambdaBase.Runtime.NODEJS_22_X,
