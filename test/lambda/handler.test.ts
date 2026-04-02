@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { mockClient } from 'aws-sdk-client-mock';
 import { S3Client, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { SESClient, SendRawEmailCommand } from '@aws-sdk/client-ses';
@@ -47,6 +48,8 @@ function makeSesEvent(messageId: string, recipients: string[]) {
   };
 }
 
+const CONFIG_HASH = createHash('sha256').update(CONFIG_JSON).digest('hex');
+
 function toSdkStream(content: string) {
   const stream = new Readable();
   stream.push(content);
@@ -66,6 +69,9 @@ beforeEach(() => {
   });
   s3Mock.on(GetObjectCommand, { Key: 'config/config.json' }).resolves({
     Body: toSdkStream(CONFIG_JSON),
+  });
+  s3Mock.on(GetObjectCommand, { Key: 'config/config.json.sha256' }).resolves({
+    Body: toSdkStream(CONFIG_HASH),
   });
   sesMock.on(SendRawEmailCommand).resolves({ MessageId: 'sent-123' });
   s3Mock.on(DeleteObjectCommand).resolves({});
@@ -103,8 +109,12 @@ describe('handler', () => {
 
   test('does not forward when no route found', async () => {
     const noRouteConfig = JSON.stringify({ domains: {} });
+    const noRouteHash = createHash('sha256').update(noRouteConfig).digest('hex');
     s3Mock.on(GetObjectCommand, { Key: 'config/config.json' }).resolves({
       Body: toSdkStream(noRouteConfig),
+    });
+    s3Mock.on(GetObjectCommand, { Key: 'config/config.json.sha256' }).resolves({
+      Body: toSdkStream(noRouteHash),
     });
 
     await handler(makeSesEvent('abc123', ['user@unknown.com']));
@@ -167,5 +177,36 @@ describe('handler', () => {
     );
 
     expect(s3Mock.commandCalls(DeleteObjectCommand)).toHaveLength(0);
+  });
+
+  test('forwards email when config hash matches', async () => {
+    // Hash is set correctly in beforeEach — should forward normally
+    await handler(makeSesEvent('abc123', ['info@example.com']));
+
+    expect(sesMock.commandCalls(SendRawEmailCommand)).toHaveLength(1);
+  });
+
+  test('throws when config hash does not match', async () => {
+    s3Mock.on(GetObjectCommand, { Key: 'config/config.json.sha256' }).resolves({
+      Body: toSdkStream('0000000000000000000000000000000000000000000000000000000000000000'),
+    });
+
+    await expect(handler(makeSesEvent('abc123', ['info@example.com']))).rejects.toThrow(
+      'Config integrity check failed'
+    );
+
+    expect(sesMock.commandCalls(SendRawEmailCommand)).toHaveLength(0);
+  });
+
+  test('throws when config hash file is missing', async () => {
+    const noSuchKeyError = new Error('NoSuchKey');
+    noSuchKeyError.name = 'NoSuchKey';
+    s3Mock.on(GetObjectCommand, { Key: 'config/config.json.sha256' }).rejects(noSuchKeyError);
+
+    await expect(handler(makeSesEvent('abc123', ['info@example.com']))).rejects.toThrow(
+      'NoSuchKey'
+    );
+
+    expect(sesMock.commandCalls(SendRawEmailCommand)).toHaveLength(0);
   });
 });

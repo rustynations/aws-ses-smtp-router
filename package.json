@@ -8,6 +8,9 @@
     "build": "tsc",
     "watch": "tsc -w",
     "test": "jest",
+    "hash-config": "node scripts/hash-config.js",
+    "predeploy": "node scripts/hash-config.js",
+    "deploy": "cdk deploy",
     "cdk": "cdk"
   },
   "devDependencies": {

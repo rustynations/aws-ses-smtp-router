@@ -48,7 +48,7 @@ export class SesRouterStack extends cdk.Stack {
     // Deploy config.json to S3
     new s3deploy.BucketDeployment(this, 'DeployConfig', {
       sources: [s3deploy.Source.asset(path.dirname(props.configPath), {
-        exclude: ['*', '!config.json'],
+        exclude: ['*', '!config.json', '!config.json.sha256'],
       })],
       destinationBucket: bucket,
       destinationKeyPrefix: 'config',
