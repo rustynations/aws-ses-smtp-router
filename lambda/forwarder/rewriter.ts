@@ -40,14 +40,18 @@ export function rewriteEmail(options: RewriteOptions): string {
       continue; // Remove — invalid after rewrite
     } else if (headerLower.startsWith('reply-to:')) {
       continue; // We'll add our own below
+    } else if (headerLower.startsWith('bcc:')) {
+      continue; // Strip — forwarded emails should not carry Bcc
     } else {
       newHeaders.push(header);
     }
   }
 
-  // Add new headers
-  newHeaders.push(`Reply-To: ${originalSender}`);
+  // Add new headers (sanitize to prevent header injection)
+  const safeSender = originalSender.replace(/[\r\n\0]/g, '');
+  newHeaders.push(`Reply-To: ${safeSender}`);
   newHeaders.push(`X-Original-To: ${originalRecipient}`);
+  newHeaders.push('X-SES-Router-Forwarded: true');
 
   return newHeaders.join(lineEnding) + separator + body;
 }
@@ -56,11 +60,14 @@ function parseFromHeader(fromValue: string): { displayName: string; address: str
   // Match: "Display Name" <email@example.com> or Display Name <email@example.com>
   const bracketMatch = fromValue.match(/^"?([^"<]*?)"?\s*<([^>]+)>/);
   if (bracketMatch) {
-    return { displayName: bracketMatch[1].trim(), address: bracketMatch[2].trim() };
+    return {
+      displayName: bracketMatch[1].trim().replace(/[\r\n\0"]/g, ''),
+      address: bracketMatch[2].trim().replace(/[\r\n\0]/g, ''),
+    };
   }
 
   // Match: email@example.com (bare address)
-  return { displayName: '', address: fromValue.trim() };
+  return { displayName: '', address: fromValue.trim().replace(/[\r\n\0]/g, '') };
 }
 
 function unfoldHeaders(headerSection: string, lineEnding: string): string[] {
