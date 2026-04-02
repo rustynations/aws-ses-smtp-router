@@ -57,14 +57,24 @@ describe('SesRouterStack', () => {
     });
   });
 
-  test('Lambda has SES send permission', () => {
-    const template = createTestStack();
+  test('Lambda has SES send permission scoped to configured domains', () => {
+    const template = createTestStack(['example.com', 'another.com']);
     template.hasResourceProperties('AWS::IAM::Policy', {
       PolicyDocument: {
         Statement: Match.arrayWith([
           Match.objectLike({
             Action: 'ses:SendRawEmail',
             Effect: 'Allow',
+            Resource: Match.arrayWith([
+              {
+                'Fn::Join': Match.arrayWith([
+                  Match.arrayWith([
+                    Match.stringLikeRegexp('arn:aws:ses:'),
+                    Match.stringLikeRegexp(':identity/example\\.com'),
+                  ]),
+                ]),
+              },
+            ]),
           }),
         ]),
       },

@@ -68,7 +68,9 @@ export class SesRouterStack extends cdk.Stack {
     forwarder.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['ses:SendRawEmail'],
-        resources: ['*'],
+        resources: props.domains.map(
+          (domain) => `arn:aws:ses:${this.region}:${this.account}:identity/${domain}`
+        ),
       })
     );
 
