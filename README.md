@@ -142,6 +142,10 @@ The `X-Original-To` header is useful for setting up Gmail filters per recipient 
 | `npx cdk synth` | Emit CloudFormation template |
 | `npx cdk destroy` | Tear down stack |
 
+## Known Risks
+
+Email forwarding has inherent trade-offs — no spam filtering, SES reputation exposure, size limits, and more. Read [RISKS.md](RISKS.md) before deploying to understand what this stack does and doesn't handle.
+
 ## Security
 
 See [SECURITY.md](SECURITY.md) for a full description of security controls including IAM scoping, input validation, loop detection, header injection protection, config integrity verification, and operational alerting.
@@ -151,6 +155,7 @@ See [SECURITY.md](SECURITY.md) for a full description of security controls inclu
 - [Architecture](ARCHITECTURE.md) — system design, data flow, and infrastructure details
 - [Developer Guide](DEVELOPER.md) — local setup, testing, and contributing
 - [Security](SECURITY.md) — security controls and design decisions
+- [Known Risks](RISKS.md) — trade-offs and limitations to understand before deploying
 
 ## License
 
