@@ -117,8 +117,8 @@ config.json (S3)
 ```
 
 Config lives in S3, not in the Lambda code or CDK parameters. This means:
-- **Routing changes** (where mail goes) need only an S3 upload — no deploy
-- **Domain changes** (adding/removing domains) require a `cdk deploy` to create/remove SES identities and receipt rules
+- **Routing changes** (where mail goes) require a `cdk deploy` to keep the config and its integrity hash in sync. It's possible to upload both files to S3 manually, but a full deploy is the recommended path.
+- **Domain changes** (adding/removing domains) always require a `cdk deploy` to create/remove SES identities and receipt rules
 
 The Lambda reads config fresh on every invocation. No caching, no stale state.
 

@@ -6,7 +6,9 @@ Built with CDK. No servers to manage, no mail platform to maintain — just a La
 
 ## Why
 
-Managed email services like AWS WorkMail are expensive, opaque, and one deprecation notice away from a forced migration. Most domains don't need a mailbox — they need a pipe. Mail comes in, mail goes somewhere useful. This project does exactly that for pennies per month.
+Many domains don't need a full-service mailbox. Small companies, side projects, hobby domains — the people behind them already have a personal email address. They just need inbound mail to land somewhere they actually check.
+
+Managed email services like AWS WorkMail can be expensive and rigid for domains that only need forwarding. This project replaces all of that with a single Lambda and a config file, for pennies per month.
 
 ## How It Works
 
@@ -45,12 +47,14 @@ Inbound email → SES Receipt Rule → S3 → Lambda → SES Send → Gmail (or 
 ### Deploy
 
 ```bash
-# Install dependencies
+# Clone and install
+git clone https://github.com/rusty428/aws-ses-smtp-router-infra.git
+cd aws-ses-smtp-router-infra
 npm install
 
 # Create your routing config
 cp config.json.example config.json
-# Edit config.json with your domains and forwarding addresses
+# Edit config.json with your domains, forwarding addresses, and alarm email
 
 # Deploy
 npx cdk deploy
@@ -63,7 +67,7 @@ npx cdk deploy
    ```bash
    aws ses set-active-receipt-rule-set --rule-set-name ses-router-rules
    ```
-3. **Wait for DKIM verification** — can take up to 72 hours, usually much faster.
+3. **Wait for DKIM verification** — typically 5–15 minutes, though it can take up to 72 hours.
 4. **Test** — send an email to `anything@yourdomain.com` and confirm it arrives.
 
 ## Configuration
@@ -72,6 +76,7 @@ Routing is defined in `config.json`:
 
 ```json
 {
+  "alarmEmail": "you@gmail.com",
   "defaultForwardTo": "fallback@gmail.com",
   "domains": {
     "example.com": {

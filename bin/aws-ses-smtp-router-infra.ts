@@ -8,9 +8,11 @@ import { SesRouterStack } from '../lib/ses-router-stack';
 const configPath = path.resolve(__dirname, '../config.json');
 
 let domains: string[] = [];
+let alarmEmail: string | undefined;
 if (fs.existsSync(configPath)) {
   const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
   domains = Object.keys(config.domains);
+  alarmEmail = config.alarmEmail;
 }
 
 const app = new cdk.App();
@@ -18,5 +20,5 @@ new SesRouterStack(app, 'SesRouterStack', {
   env: { account: process.env.CDK_DEFAULT_ACCOUNT, region: 'us-east-1' },
   domains,
   configPath,
-  alarmEmail: 'rustynations@gmail.com',
+  alarmEmail,
 });

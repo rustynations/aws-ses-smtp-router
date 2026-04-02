@@ -4,6 +4,9 @@
   "bin": {
     "aws-ses-smtp-router-infra": "bin/aws-ses-smtp-router-infra.js"
   },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",

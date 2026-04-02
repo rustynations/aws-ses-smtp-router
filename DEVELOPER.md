@@ -4,8 +4,8 @@
 
 ```bash
 # Clone the repo
-git clone https://github.com/rusty428/aws-ses-smtp-router.git
-cd aws-ses-smtp-router
+git clone https://github.com/rusty428/aws-ses-smtp-router-infra.git
+cd aws-ses-smtp-router-infra
 
 # Install dependencies
 npm install
@@ -111,12 +111,8 @@ To test Lambda changes locally, run the unit tests — they mock the full AWS SD
      }
    }
    ```
-2. Deploy: `npx cdk deploy`
+2. Deploy: `npx cdk deploy` (this uploads the config and regenerates the integrity hash automatically)
 3. Add DNS records from the stack outputs (DKIM CNAMEs, MX, SPF, DMARC)
-4. Upload the updated config to S3:
-   ```bash
-   aws s3 cp config.json s3://<bucket-name>/config/config.json
-   ```
 
 ## Configuration
 

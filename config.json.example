@@ -1,4 +1,5 @@
 {
+  "alarmEmail": "you@gmail.com",
   "defaultForwardTo": "you@gmail.com",
   "domains": {
     "example.com": {
