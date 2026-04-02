@@ -50,6 +50,7 @@ export class SesRouterStack extends cdk.Stack {
       runtime: lambdaBase.Runtime.NODEJS_22_X,
       timeout: cdk.Duration.seconds(30),
       memorySize: 256,
+      reservedConcurrentExecutions: 10,
       environment: {
         BUCKET_NAME: bucket.bucketName,
         CONFIG_KEY: 'config/config.json',

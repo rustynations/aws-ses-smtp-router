@@ -1,5 +1,5 @@
 import { mockClient } from 'aws-sdk-client-mock';
-import { S3Client, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { SESClient, SendRawEmailCommand } from '@aws-sdk/client-ses';
 import { Readable } from 'stream';
 import { sdkStreamMixin } from '@smithy/util-stream';
@@ -58,6 +58,9 @@ beforeEach(() => {
   s3Mock.reset();
   sesMock.reset();
 
+  s3Mock.on(HeadObjectCommand, { Key: 'emails/abc123' }).resolves({
+    ContentLength: RAW_EMAIL.length,
+  });
   s3Mock.on(GetObjectCommand, { Key: 'emails/abc123' }).resolves({
     Body: toSdkStream(RAW_EMAIL),
   });
@@ -109,6 +112,19 @@ describe('handler', () => {
     expect(sesMock.commandCalls(SendRawEmailCommand)).toHaveLength(0);
     // Email should still be deleted (no retry needed for unroutable mail)
     expect(s3Mock.commandCalls(DeleteObjectCommand)).toHaveLength(0);
+  });
+
+  test('rejects oversized emails and deletes them from S3', async () => {
+    s3Mock.on(HeadObjectCommand, { Key: 'emails/abc123' }).resolves({
+      ContentLength: 15 * 1024 * 1024, // 15 MB — over 10 MB limit
+    });
+
+    await handler(makeSesEvent('abc123', ['info@example.com']));
+
+    expect(sesMock.commandCalls(SendRawEmailCommand)).toHaveLength(0);
+    const deleteCalls = s3Mock.commandCalls(DeleteObjectCommand);
+    expect(deleteCalls).toHaveLength(1);
+    expect(deleteCalls[0].args[0].input.Key).toBe('emails/abc123');
   });
 
   test('does not delete email from S3 if SES send fails', async () => {
