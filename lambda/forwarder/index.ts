@@ -1,4 +1,4 @@
-import { S3Client, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { SESClient, SendRawEmailCommand } from '@aws-sdk/client-ses';
 import { resolveRoute, type RouterConfig } from './router';
 import { rewriteEmail } from './rewriter';
@@ -8,6 +8,7 @@ const ses = new SESClient({});
 
 const BUCKET_NAME = process.env.BUCKET_NAME!;
 const CONFIG_KEY = process.env.CONFIG_KEY!;
+const MAX_EMAIL_SIZE = 10 * 1024 * 1024; // 10 MB
 
 export async function handler(event: { Records: Array<{ ses: { mail: { messageId: string }; receipt: { recipients: string[] } } }> }): Promise<void> {
   const record = event.Records[0];
@@ -17,9 +18,20 @@ export async function handler(event: { Records: Array<{ ses: { mail: { messageId
 
   console.log(`Processing email ${messageId} for ${recipient}`);
 
+  // Check email size before loading into memory
+  const emailKey = `emails/${messageId}`;
+  const head = await s3.send(
+    new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: emailKey })
+  );
+  if (head.ContentLength && head.ContentLength > MAX_EMAIL_SIZE) {
+    console.warn(`Email ${messageId} is ${head.ContentLength} bytes (limit ${MAX_EMAIL_SIZE}), deleting and skipping`);
+    await s3.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: emailKey }));
+    return;
+  }
+
   // Read raw email from S3
   const emailResponse = await s3.send(
-    new GetObjectCommand({ Bucket: BUCKET_NAME, Key: `emails/${messageId}` })
+    new GetObjectCommand({ Bucket: BUCKET_NAME, Key: emailKey })
   );
   const rawEmail = await emailResponse.Body!.transformToString();
 
@@ -60,6 +72,6 @@ export async function handler(event: { Records: Array<{ ses: { mail: { messageId
 
   // Delete email from S3
   await s3.send(
-    new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: `emails/${messageId}` })
+    new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: emailKey })
   );
 }
