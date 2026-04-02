@@ -26,8 +26,12 @@ Inbound email → SES Receipt Rule → S3 → Lambda → SES Send → Gmail (or 
 - **Multi-domain** — route any number of domains from a single stack
 - **Catch-all + per-address routing** — flexible three-tier routing (exact match → domain catch-all → global default)
 - **Header rewriting** — preserves Reply-To chain, adds X-Original-To for downstream filtering
-- **Config-driven** — change routing by updating a JSON file in S3, no redeploy needed
+- **Config-driven** — change routing by updating a JSON file and redeploying
 - **Auto-cleanup** — S3 lifecycle expires stored emails after 7 days
+- **Loop protection** — detects and breaks forwarding loops via `X-SES-Router-Forwarded` header
+- **Size validation** — rejects emails over 10 MB before loading into memory
+- **Integrity checking** — SHA-256 verification of config.json prevents unauthorized routing changes
+- **Observability** — CloudWatch alarms for errors, throttles, and dead letter queue depth
 
 ## Quick Start
 
@@ -91,15 +95,18 @@ Routing is defined in `config.json`:
 3. **Global default** — `user@unknown-domain.com` → `fallback@gmail.com`
 4. **No match** — email is silently discarded (logged)
 
-### Updating Routes Without Redeploying
+### Updating Routes
 
-To change where mail forwards (without adding/removing domains):
+All config changes should be followed by a redeploy to keep the integrity hash in sync:
 
 ```bash
-aws s3 cp config.json s3://<bucket-name>/config/config.json
+# Edit config.json, then:
+npx cdk deploy
 ```
 
-Adding a new domain requires a `cdk deploy` to create the SES identity and receipt rule.
+This regenerates the SHA-256 hash automatically and uploads both files to S3.
+
+> **Note:** It is possible to update config manually by uploading both `config.json` and a matching `config.json.sha256` to S3, but a full redeploy is recommended to ensure integrity.
 
 ## Header Rewriting
 
@@ -108,10 +115,12 @@ Forwarded emails have their headers rewritten for clean delivery:
 | Header | Value |
 |--------|-------|
 | `From` | `"Original Sender Name" <noreply@yourdomain.com>` |
-| `Reply-To` | Original sender's address |
+| `Reply-To` | Original sender's address (sanitized) |
 | `X-Original-To` | The address that received the email |
+| `X-SES-Router-Forwarded` | `true` — used for loop detection |
 | `Return-Path` | Removed (SES sets its own) |
 | `DKIM-Signature` | Removed (invalid after rewrite) |
+| `Bcc` | Removed (prevents header injection) |
 
 The `X-Original-To` header is useful for setting up Gmail filters per recipient address.
 
@@ -122,15 +131,21 @@ The `X-Original-To` header is useful for setting up Gmail filters per recipient 
 | `npm run build` | Compile TypeScript |
 | `npm run watch` | Watch and compile on changes |
 | `npm run test` | Run tests |
+| `npm run hash-config` | Regenerate config.json.sha256 (runs automatically on deploy) |
 | `npx cdk deploy` | Deploy stack |
 | `npx cdk diff` | Preview changes |
 | `npx cdk synth` | Emit CloudFormation template |
 | `npx cdk destroy` | Tear down stack |
 
+## Security
+
+See [SECURITY.md](SECURITY.md) for a full description of security controls including IAM scoping, input validation, loop detection, header injection protection, config integrity verification, and operational alerting.
+
 ## Documentation
 
 - [Architecture](ARCHITECTURE.md) — system design, data flow, and infrastructure details
 - [Developer Guide](DEVELOPER.md) — local setup, testing, and contributing
+- [Security](SECURITY.md) — security controls and design decisions
 
 ## License
 
