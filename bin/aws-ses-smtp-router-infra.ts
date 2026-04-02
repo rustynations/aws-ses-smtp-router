@@ -18,4 +18,5 @@ new SesRouterStack(app, 'SesRouterStack', {
   env: { account: process.env.CDK_DEFAULT_ACCOUNT, region: 'us-east-1' },
   domains,
   configPath,
+  alarmEmail: 'rustynations@gmail.com',
 });

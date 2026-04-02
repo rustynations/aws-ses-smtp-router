@@ -7,12 +7,17 @@ import * as ses from 'aws-cdk-lib/aws-ses';
 import * as sesActions from 'aws-cdk-lib/aws-ses-actions';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as snsSubscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
+import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as cwActions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import { Construct } from 'constructs';
 import * as path from 'path';
 
 export interface SesRouterStackProps extends cdk.StackProps {
   domains: string[];
   configPath: string;
+  alarmEmail?: string;
 }
 
 export class SesRouterStack extends cdk.Stack {
@@ -165,6 +170,79 @@ export class SesRouterStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'RuleSetName', {
       value: 'ses-router-rules',
       description: 'SES receipt rule set name (must be activated manually)',
+    });
+
+    // --- Observability (#6) and Bounce/Complaint handling (#7) ---
+
+    // SNS topic for operational alerts
+    const alarmTopic = new sns.Topic(this, 'AlarmTopic', {
+      displayName: 'SES Router Alarms',
+    });
+
+    if (props.alarmEmail) {
+      alarmTopic.addSubscription(
+        new snsSubscriptions.EmailSubscription(props.alarmEmail)
+      );
+    }
+
+    // Lambda error alarm
+    new cloudwatch.Alarm(this, 'ForwarderErrors', {
+      metric: forwarder.metricErrors({ period: cdk.Duration.minutes(5) }),
+      threshold: 3,
+      evaluationPeriods: 1,
+      alarmDescription: 'Forwarder Lambda error count exceeded threshold',
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    }).addAlarmAction(new cwActions.SnsAction(alarmTopic));
+
+    // Lambda throttle alarm
+    new cloudwatch.Alarm(this, 'ForwarderThrottles', {
+      metric: forwarder.metricThrottles({ period: cdk.Duration.minutes(5) }),
+      threshold: 1,
+      evaluationPeriods: 1,
+      alarmDescription: 'Forwarder Lambda is being throttled',
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    }).addAlarmAction(new cwActions.SnsAction(alarmTopic));
+
+    // DLQ depth alarm — emails are failing to forward
+    new cloudwatch.Alarm(this, 'DLQDepth', {
+      metric: dlq.metricApproximateNumberOfMessagesVisible({
+        period: cdk.Duration.minutes(5),
+      }),
+      threshold: 1,
+      evaluationPeriods: 1,
+      alarmDescription: 'Dead letter queue has messages — emails failed to forward',
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    }).addAlarmAction(new cwActions.SnsAction(alarmTopic));
+
+    // SNS topics for SES bounce and complaint notifications
+    const bounceTopic = new sns.Topic(this, 'BounceTopic', {
+      displayName: 'SES Bounces',
+    });
+    bounceTopic.addSubscription(
+      new snsSubscriptions.SqsSubscription(dlq)
+    );
+
+    const complaintTopic = new sns.Topic(this, 'ComplaintTopic', {
+      displayName: 'SES Complaints',
+    });
+    complaintTopic.addSubscription(
+      new snsSubscriptions.SqsSubscription(dlq)
+    );
+
+    // Outputs for bounce/complaint topic ARNs (wire to SES identities manually or via CLI)
+    new cdk.CfnOutput(this, 'BounceTopicArn', {
+      value: bounceTopic.topicArn,
+      description: 'SNS topic ARN for SES bounce notifications',
+    });
+
+    new cdk.CfnOutput(this, 'ComplaintTopicArn', {
+      value: complaintTopic.topicArn,
+      description: 'SNS topic ARN for SES complaint notifications',
+    });
+
+    new cdk.CfnOutput(this, 'AlarmTopicArn', {
+      value: alarmTopic.topicArn,
+      description: 'SNS topic ARN for operational alarms',
     });
   }
 }
