@@ -11,7 +11,15 @@ const CONFIG_KEY = process.env.CONFIG_KEY!;
 const MAX_EMAIL_SIZE = 10 * 1024 * 1024; // 10 MB
 
 export async function handler(event: { Records: Array<{ ses: { mail: { messageId: string }; receipt: { recipients: string[] } } }> }): Promise<void> {
+  if (!event.Records?.length) {
+    console.error('No records in SES event', JSON.stringify(event));
+    return;
+  }
   const record = event.Records[0];
+  if (!record.ses?.receipt?.recipients?.length) {
+    console.error('No recipients in SES record', JSON.stringify(record));
+    return;
+  }
   const messageId = record.ses.mail.messageId;
   const recipients = record.ses.receipt.recipients;
   const recipient = recipients[0];

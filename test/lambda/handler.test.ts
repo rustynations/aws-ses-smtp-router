@@ -149,6 +149,16 @@ describe('handler', () => {
     expect(deleteCalls[0].args[0].input.Key).toBe('emails/abc123');
   });
 
+  test('handles empty Records array gracefully', async () => {
+    await handler({ Records: [] } as any);
+    expect(sesMock.commandCalls(SendRawEmailCommand)).toHaveLength(0);
+  });
+
+  test('handles missing recipients gracefully', async () => {
+    await handler({ Records: [{ ses: { mail: { messageId: 'x' }, receipt: { recipients: [] } } }] } as any);
+    expect(sesMock.commandCalls(SendRawEmailCommand)).toHaveLength(0);
+  });
+
   test('does not delete email from S3 if SES send fails', async () => {
     sesMock.on(SendRawEmailCommand).rejects(new Error('SES failure'));
 
