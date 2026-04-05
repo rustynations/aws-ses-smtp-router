@@ -1,6 +1,6 @@
 {
   "name": "aws-ses-smtp-router-infra",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "bin": {
     "aws-ses-smtp-router-infra": "bin/aws-ses-smtp-router-infra.js"
   },
