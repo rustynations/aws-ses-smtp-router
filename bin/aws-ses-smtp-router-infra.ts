@@ -5,6 +5,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { SesRouterStack } from '../lib/ses-router-stack';
+import { validateConfig } from '../lambda/forwarder/validate';
 
 const configPath = path.resolve(__dirname, '../config.json');
 
@@ -13,6 +14,7 @@ let alarmEmail: string | undefined;
 if (fs.existsSync(configPath)) {
   const configBody = fs.readFileSync(configPath, 'utf-8');
   const config = JSON.parse(configBody);
+  validateConfig(config);
   domains = Object.keys(config.domains);
   alarmEmail = config.alarmEmail;
 
