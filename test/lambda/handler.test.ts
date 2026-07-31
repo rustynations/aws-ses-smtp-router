@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { mockClient } from 'aws-sdk-client-mock';
 import { S3Client, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
-import { SESClient, SendRawEmailCommand } from '@aws-sdk/client-ses';
+import { SESClient, SendRawEmailCommand, SendBounceCommand } from '@aws-sdk/client-ses';
 import { Readable } from 'stream';
 import { sdkStreamMixin } from '@smithy/util-stream';
 
@@ -35,12 +35,12 @@ const CONFIG_JSON = JSON.stringify({
   },
 });
 
-function makeSesEvent(messageId: string, recipients: string[]) {
+function makeSesEvent(messageId: string, recipients: string[], source = 'sender@external.com') {
   return {
     Records: [
       {
         ses: {
-          mail: { messageId },
+          mail: { messageId, source },
           receipt: { recipients },
         },
       },
@@ -120,8 +120,8 @@ describe('handler', () => {
     await handler(makeSesEvent('abc123', ['user@unknown.com']));
 
     expect(sesMock.commandCalls(SendRawEmailCommand)).toHaveLength(0);
-    // Email should still be deleted (no retry needed for unroutable mail)
-    expect(s3Mock.commandCalls(DeleteObjectCommand)).toHaveLength(0);
+    // Email is deleted (drop is a terminal action)
+    expect(s3Mock.commandCalls(DeleteObjectCommand)).toHaveLength(1);
   });
 
   test('detects forwarding loop and deletes email', async () => {
@@ -208,5 +208,68 @@ describe('handler', () => {
     );
 
     expect(sesMock.commandCalls(SendRawEmailCommand)).toHaveLength(0);
+  });
+});
+
+describe('handler blocking actions', () => {
+  const BLOCK_CONFIG = JSON.stringify({
+    domains: {
+      'example.com': {
+        catchAll: 'catch@gmail.com',
+        routes: {
+          'dennis@example.com': 'bounce',
+          'spam@example.com': 'drop',
+        },
+      },
+    },
+  });
+  const BLOCK_HASH = createHash('sha256').update(BLOCK_CONFIG).digest('hex');
+
+  beforeEach(() => {
+    s3Mock.on(GetObjectCommand, { Key: 'config/config.json' }).resolves({
+      Body: toSdkStream(BLOCK_CONFIG),
+    });
+    s3Mock.on(GetObjectCommand, { Key: 'config/config.json.sha256' }).resolves({
+      Body: toSdkStream(BLOCK_HASH),
+    });
+    sesMock.on(SendBounceCommand).resolves({ MessageId: 'bounce-123' });
+  });
+
+  test('drop action deletes without sending', async () => {
+    s3Mock.on(GetObjectCommand, { Key: 'emails/abc123' }).resolves({
+      Body: toSdkStream(RAW_EMAIL.replace('info@example.com', 'spam@example.com')),
+    });
+
+    await handler(makeSesEvent('abc123', ['spam@example.com']));
+
+    expect(sesMock.commandCalls(SendRawEmailCommand)).toHaveLength(0);
+    expect(sesMock.commandCalls(SendBounceCommand)).toHaveLength(0);
+    expect(s3Mock.commandCalls(DeleteObjectCommand)).toHaveLength(1);
+  });
+
+  test('bounce action calls SendBounce, not SendRawEmail, then deletes', async () => {
+    s3Mock.on(GetObjectCommand, { Key: 'emails/abc123' }).resolves({
+      Body: toSdkStream(RAW_EMAIL.replace('info@example.com', 'dennis@example.com')),
+    });
+
+    await handler(makeSesEvent('abc123', ['dennis@example.com']));
+
+    expect(sesMock.commandCalls(SendRawEmailCommand)).toHaveLength(0);
+    const bounceCalls = sesMock.commandCalls(SendBounceCommand);
+    expect(bounceCalls).toHaveLength(1);
+    expect(bounceCalls[0].args[0].input.OriginalMessageId).toBe('abc123');
+    expect(s3Mock.commandCalls(DeleteObjectCommand)).toHaveLength(1);
+  });
+
+  test('bounce with missing mailFrom falls back to drop', async () => {
+    s3Mock.on(GetObjectCommand, { Key: 'emails/abc123' }).resolves({
+      Body: toSdkStream(RAW_EMAIL.replace('info@example.com', 'dennis@example.com')),
+    });
+
+    await handler(makeSesEvent('abc123', ['dennis@example.com'], ''));
+
+    expect(sesMock.commandCalls(SendBounceCommand)).toHaveLength(0);
+    expect(sesMock.commandCalls(SendRawEmailCommand)).toHaveLength(0);
+    expect(s3Mock.commandCalls(DeleteObjectCommand)).toHaveLength(1);
   });
 });

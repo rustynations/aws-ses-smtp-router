@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { S3Client, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
-import { SESClient, SendRawEmailCommand } from '@aws-sdk/client-ses';
+import { SESClient, SendRawEmailCommand, SendBounceCommand } from '@aws-sdk/client-ses';
 import { resolveRoute, type RouterConfig } from './router';
 import { rewriteEmail } from './rewriter';
 import { validateConfig } from './validate';
@@ -12,7 +12,7 @@ const BUCKET_NAME = process.env.BUCKET_NAME!;
 const CONFIG_KEY = process.env.CONFIG_KEY!;
 const MAX_EMAIL_SIZE = 10 * 1024 * 1024; // 10 MB
 
-export async function handler(event: { Records: Array<{ ses: { mail: { messageId: string }; receipt: { recipients: string[] } } }> }): Promise<void> {
+export async function handler(event: { Records: Array<{ ses: { mail: { messageId: string; source?: string }; receipt: { recipients: string[] } } }> }): Promise<void> {
   if (!event.Records?.length) {
     console.error('No records in SES event', JSON.stringify(event));
     return;
@@ -72,35 +72,55 @@ export async function handler(event: { Records: Array<{ ses: { mail: { messageId
   validateConfig(config);
 
   // Resolve route
-  const forwardTo = resolveRoute(config, recipient);
-  if (!forwardTo) {
-    console.warn(`No route found for ${recipient}, skipping`);
-    return;
+  const route = resolveRoute(config, recipient);
+  const recipientDomain = recipient.substring(recipient.lastIndexOf('@') + 1);
+  const mailFrom = record.ses.mail.source;
+
+  // A bounce with no envelope sender degrades to a silent drop.
+  const effectiveAction =
+    route.action === 'bounce' && !mailFrom ? 'drop' : route.action;
+
+  if (effectiveAction === 'drop') {
+    console.warn(`Dropping ${recipient} (action=drop)`);
+  } else if (effectiveAction === 'bounce') {
+    console.log(`Bouncing ${recipient} back to ${mailFrom}`);
+    await ses.send(
+      new SendBounceCommand({
+        OriginalMessageId: messageId,
+        BounceSender: `noreply@${recipientDomain}`,
+        Explanation: 'User unknown',
+        MessageDsn: {
+          ReportingMta: `dns; ${recipientDomain}`,
+        },
+        BouncedRecipientInfoList: [
+          {
+            Recipient: recipient,
+            BounceType: 'DoesNotExist',
+          },
+        ],
+      })
+    );
+  } else {
+    // forward
+    if (route.action !== 'forward') {
+      throw new Error(`Unexpected route action: ${route.action}`);
+    }
+    console.log(`Forwarding ${recipient} → ${route.to}`);
+    const rewrittenEmail = rewriteEmail({
+      rawEmail,
+      originalRecipient: recipient,
+      recipientDomain,
+    });
+    await ses.send(
+      new SendRawEmailCommand({
+        RawMessage: { Data: Buffer.from(rewrittenEmail) },
+        Destinations: [route.to],
+      })
+    );
+    console.log(`Forwarded ${messageId} to ${route.to}`);
   }
 
-  console.log(`Forwarding ${recipient} → ${forwardTo}`);
-
-  // Extract domain from recipient
-  const recipientDomain = recipient.substring(recipient.lastIndexOf('@') + 1);
-
-  // Rewrite email headers
-  const rewrittenEmail = rewriteEmail({
-    rawEmail,
-    originalRecipient: recipient,
-    recipientDomain,
-  });
-
-  // Send via SES
-  await ses.send(
-    new SendRawEmailCommand({
-      RawMessage: { Data: Buffer.from(rewrittenEmail) },
-      Destinations: [forwardTo],
-    })
-  );
-
-  console.log(`Forwarded ${messageId} to ${forwardTo}`);
-
-  // Delete email from S3
+  // Delete email from S3 (all terminal actions remove the stored message)
   await s3.send(
     new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: emailKey })
   );
