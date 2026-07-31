@@ -63,7 +63,7 @@ describe('SesRouterStack', () => {
       PolicyDocument: {
         Statement: Match.arrayWith([
           Match.objectLike({
-            Action: 'ses:SendRawEmail',
+            Action: Match.arrayWith(['ses:SendRawEmail', 'ses:SendBounce']),
             Effect: 'Allow',
             Resource: {
               'Fn::Join': [
@@ -86,7 +86,7 @@ describe('SesRouterStack', () => {
       JSON.stringify(p).includes('ses:SendRawEmail')
     ) as any;
     const sesStatement = forwarderPolicy.Properties.PolicyDocument.Statement.find(
-      (s: any) => s.Action === 'ses:SendRawEmail'
+      (s: any) => Array.isArray(s.Action) ? s.Action.includes('ses:SendRawEmail') : s.Action === 'ses:SendRawEmail'
     );
     expect(sesStatement.Resource).not.toBe('*');
   });
