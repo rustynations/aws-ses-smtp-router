@@ -13,3 +13,4 @@ tmp/
 # Runtime config
 config.json
 config.json.sha256
+.superpowers/
