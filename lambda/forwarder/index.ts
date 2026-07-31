@@ -3,6 +3,7 @@ import { S3Client, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } fr
 import { SESClient, SendRawEmailCommand } from '@aws-sdk/client-ses';
 import { resolveRoute, type RouterConfig } from './router';
 import { rewriteEmail } from './rewriter';
+import { validateConfig } from './validate';
 
 const s3 = new S3Client({});
 const ses = new SESClient({});
@@ -68,6 +69,7 @@ export async function handler(event: { Records: Array<{ ses: { mail: { messageId
   }
 
   const config: RouterConfig = JSON.parse(configBody);
+  validateConfig(config);
 
   // Resolve route
   const forwardTo = resolveRoute(config, recipient);
