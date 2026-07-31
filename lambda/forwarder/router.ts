@@ -8,27 +8,29 @@ interface DomainConfig {
   routes?: Record<string, string>;
 }
 
-export function resolveRoute(config: RouterConfig, recipient: string): string | null {
+export type RouteResult =
+  | { action: 'forward'; to: string }
+  | { action: 'drop' }
+  | { action: 'bounce' };
+
+function toResult(value: string): RouteResult {
+  if (value === 'bounce') return { action: 'bounce' };
+  if (value === 'drop') return { action: 'drop' };
+  return { action: 'forward', to: value };
+}
+
+export function resolveRoute(config: RouterConfig, recipient: string): RouteResult {
   const normalizedRecipient = recipient.toLowerCase();
   const atIndex = normalizedRecipient.lastIndexOf('@');
-  if (atIndex === -1) {
-    return config.defaultForwardTo ?? null;
-  }
+  const domain = atIndex === -1 ? '' : normalizedRecipient.substring(atIndex + 1);
+  const domainConfig = domain ? config.domains[domain] : undefined;
 
-  const domain = normalizedRecipient.substring(atIndex + 1);
-  const domainConfig = config.domains[domain];
+  const exact = domainConfig?.routes?.[normalizedRecipient];
+  if (exact !== undefined) return toResult(exact);
 
-  if (!domainConfig) {
-    return config.defaultForwardTo ?? null;
-  }
+  if (domainConfig?.catchAll) return { action: 'forward', to: domainConfig.catchAll };
 
-  if (domainConfig.routes?.[normalizedRecipient]) {
-    return domainConfig.routes[normalizedRecipient];
-  }
+  if (config.defaultForwardTo) return { action: 'forward', to: config.defaultForwardTo };
 
-  if (domainConfig.catchAll) {
-    return domainConfig.catchAll;
-  }
-
-  return config.defaultForwardTo ?? null;
+  return { action: 'drop' };
 }
