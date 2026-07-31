@@ -6,7 +6,9 @@
       "catchAll": "you@gmail.com",
       "routes": {
         "sales@example.com": "sales@gmail.com",
-        "support@example.com": "support@gmail.com"
+        "support@example.com": "support@gmail.com",
+        "departed@example.com": "bounce",
+        "harvested@example.com": "drop"
       }
     },
     "another-domain.com": {
