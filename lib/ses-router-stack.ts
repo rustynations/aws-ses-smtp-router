@@ -144,6 +144,9 @@ export class SesRouterStack extends cdk.Stack {
 
       ruleSet.addRule(`Rule-${domain}`, {
         recipients: [domain],
+        // Let SES run its spam/virus scan so the forwarder receives
+        // spamVerdict/virusVerdict. Free, and CDK defaults this to false.
+        scanEnabled: true,
         actions: [
           new sesActions.S3({
             bucket,
