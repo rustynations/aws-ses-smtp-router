@@ -1,8 +1,8 @@
 import { createHash } from 'crypto';
 import { S3Client, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { SESClient, SendRawEmailCommand, SendBounceCommand } from '@aws-sdk/client-ses';
-import { resolveRoute, type RouterConfig } from './router';
-import { rewriteEmail } from './rewriter';
+import { resolveRoute, resolveSenderBlock, resolveIpBlock, type RouterConfig } from './router';
+import { rewriteEmail, extractSenderAddress, extractSenderIp } from './rewriter';
 import { validateConfig } from './validate';
 
 const s3 = new S3Client({});
@@ -71,14 +71,28 @@ export async function handler(event: { Records: Array<{ ses: { mail: { messageId
   const config: RouterConfig = JSON.parse(configBody);
   validateConfig(config);
 
-  // Resolve route
-  const route = resolveRoute(config, recipient);
   const recipientDomain = recipient.substring(recipient.lastIndexOf('@') + 1);
   const mailFrom = record.ses.mail.source;
 
-  // A bounce with no envelope sender degrades to a silent drop.
-  const effectiveAction =
-    route.action === 'bounce' && !mailFrom ? 'drop' : route.action;
+  // Blocks win over any recipient route, including catchAll. The IP is checked
+  // first: a spammer rotates domains far faster than address blocks.
+  const senderIp = extractSenderIp(rawEmail);
+  const ipBlock = resolveIpBlock(config, senderIp);
+  if (ipBlock) {
+    console.warn(`Blocked IP ${senderIp} → action=${ipBlock.action}`);
+  }
+
+  const senderBlock = ipBlock ?? resolveSenderBlock(config, [mailFrom, extractSenderAddress(rawEmail)]);
+  if (senderBlock && !ipBlock) {
+    console.warn(`Blocked sender ${mailFrom} → action=${senderBlock.action}`);
+  }
+
+  const route = senderBlock ?? resolveRoute(config, recipient);
+
+  // Any bounce needs somewhere to send the notice. With no envelope sender it
+  // degrades to a silent drop rather than bouncing to nowhere.
+  const needsEnvelopeSender = route.action === 'bounce' || route.action === 'spam';
+  const effectiveAction = needsEnvelopeSender && !mailFrom ? 'drop' : route.action;
 
   if (effectiveAction === 'drop') {
     console.warn(`Dropping ${recipient} (action=drop)`);
@@ -96,6 +110,35 @@ export async function handler(event: { Records: Array<{ ses: { mail: { messageId
           {
             Recipient: recipient,
             BounceType: 'DoesNotExist',
+          },
+        ],
+      })
+    );
+  } else if (effectiveAction === 'spam') {
+    // Rejected on content, not on the address existing. The 500 / 5.6.1 pair is
+    // SES's "Message Content Rejected" template, spelled out here so the DSN can
+    // also carry our own spam flag in ExtensionFields.
+    console.log(`Rejecting ${recipient} as spam from ${mailFrom} (500 5.6.1)`);
+    await ses.send(
+      new SendBounceCommand({
+        OriginalMessageId: messageId,
+        BounceSender: `noreply@${recipientDomain}`,
+        Explanation: 'Message content rejected as spam',
+        MessageDsn: {
+          ReportingMta: `dns; ${recipientDomain}`,
+        },
+        BouncedRecipientInfoList: [
+          {
+            Recipient: recipient,
+            RecipientDsnFields: {
+              Action: 'failed',
+              Status: '5.6.1',
+              DiagnosticCode: 'smtp; 500 5.6.1 Message content rejected',
+              ExtensionFields: [
+                { Name: 'X-Spam-Flag', Value: 'YES' },
+                { Name: 'X-SES-Router-Rejected', Value: 'spam' },
+              ],
+            },
           },
         ],
       })

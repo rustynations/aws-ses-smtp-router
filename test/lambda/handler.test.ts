@@ -273,3 +273,196 @@ describe('handler blocking actions', () => {
     expect(s3Mock.commandCalls(DeleteObjectCommand)).toHaveLength(1);
   });
 });
+
+describe('handler sender blocking', () => {
+  const SPAM_EMAIL = [
+    'From: "AceTooIs" <acetoois@contexttable.skin>',
+    'To: rustynations@example.com',
+    'Subject: Tomorrow is the last day to use AceReward points',
+    'Content-Type: text/plain',
+    '',
+    'Test body',
+  ].join('\r\n');
+
+  const SENDER_CONFIG = JSON.stringify({
+    domains: {
+      'example.com': { catchAll: 'catch@gmail.com' },
+    },
+    blockSenders: {
+      'contexttable.skin': 'spam',
+      'quiet.example': 'drop',
+      'gone.example': 'bounce',
+    },
+  });
+  const SENDER_HASH = createHash('sha256').update(SENDER_CONFIG).digest('hex');
+
+  beforeEach(() => {
+    s3Mock.on(GetObjectCommand, { Key: 'config/config.json' }).resolves({
+      Body: toSdkStream(SENDER_CONFIG),
+    });
+    s3Mock.on(GetObjectCommand, { Key: 'config/config.json.sha256' }).resolves({
+      Body: toSdkStream(SENDER_HASH),
+    });
+    s3Mock.on(HeadObjectCommand, { Key: 'emails/spam1' }).resolves({
+      ContentLength: SPAM_EMAIL.length,
+    });
+    s3Mock.on(GetObjectCommand, { Key: 'emails/spam1' }).resolves({
+      Body: toSdkStream(SPAM_EMAIL),
+    });
+    sesMock.on(SendBounceCommand).resolves({ MessageId: 'bounce-123' });
+  });
+
+  test('a blocked sender beats the recipient catchAll', async () => {
+    await handler(makeSesEvent('spam1', ['rustynations@example.com'], 'acetoois@contexttable.skin'));
+
+    // catchAll would have forwarded — the sender block wins
+    expect(sesMock.commandCalls(SendRawEmailCommand)).toHaveLength(0);
+    expect(sesMock.commandCalls(SendBounceCommand)).toHaveLength(1);
+    expect(s3Mock.commandCalls(DeleteObjectCommand)).toHaveLength(1);
+  });
+
+  test('spam action sends a 500 / 5.6.1 content-rejected DSN with the spam flag', async () => {
+    await handler(makeSesEvent('spam1', ['rustynations@example.com'], 'acetoois@contexttable.skin'));
+
+    const bounceCalls = sesMock.commandCalls(SendBounceCommand);
+    expect(bounceCalls).toHaveLength(1);
+
+    const input = bounceCalls[0].args[0].input;
+    expect(input.OriginalMessageId).toBe('spam1');
+    expect(input.BounceSender).toBe('noreply@example.com');
+
+    const dsn = input.BouncedRecipientInfoList![0].RecipientDsnFields!;
+    expect(dsn.Action).toBe('failed');
+    expect(dsn.Status).toBe('5.6.1');
+    expect(dsn.DiagnosticCode).toBe('smtp; 500 5.6.1 Message content rejected');
+    expect(dsn.ExtensionFields).toEqual(
+      expect.arrayContaining([{ Name: 'X-Spam-Flag', Value: 'YES' }])
+    );
+  });
+
+  test('spam action does not use the DoesNotExist bounce type', async () => {
+    await handler(makeSesEvent('spam1', ['rustynations@example.com'], 'acetoois@contexttable.skin'));
+
+    const info = sesMock.commandCalls(SendBounceCommand)[0].args[0].input.BouncedRecipientInfoList![0];
+    expect(info.BounceType).toBeUndefined();
+  });
+
+  test('spam action with no envelope sender falls back to a silent drop', async () => {
+    await handler(makeSesEvent('spam1', ['rustynations@example.com'], ''));
+
+    expect(sesMock.commandCalls(SendBounceCommand)).toHaveLength(0);
+    expect(sesMock.commandCalls(SendRawEmailCommand)).toHaveLength(0);
+    expect(s3Mock.commandCalls(DeleteObjectCommand)).toHaveLength(1);
+  });
+
+  test('a blocked sender matched on the From header still blocks', async () => {
+    // Envelope sender is a clean relay; only the From header is dirty
+    await handler(makeSesEvent('spam1', ['rustynations@example.com'], 'bounces@relay.example'));
+
+    expect(sesMock.commandCalls(SendRawEmailCommand)).toHaveLength(0);
+    expect(sesMock.commandCalls(SendBounceCommand)).toHaveLength(1);
+  });
+
+  test('an unblocked sender is forwarded as before', async () => {
+    await handler(makeSesEvent('abc123', ['info@example.com'], 'sender@external.com'));
+
+    expect(sesMock.commandCalls(SendBounceCommand)).toHaveLength(0);
+    expect(sesMock.commandCalls(SendRawEmailCommand)).toHaveLength(1);
+  });
+});
+
+describe('handler IP blocking', () => {
+  function emailFromIp(ip: string, sender = 'someone@clean.example') {
+    return [
+      `Received-SPF: pass (spfCheck: domain of clean.example designates ${ip} as permitted sender) client-ip=${ip};`,
+      `From: "A Sender" <${sender}>`,
+      'To: rustynations@example.com',
+      'Subject: Thank You for Your Last Marriot Stay',
+      'Content-Type: text/plain',
+      '',
+      'Test body',
+    ].join('\r\n');
+  }
+
+  const IP_CONFIG = JSON.stringify({
+    domains: { 'example.com': { catchAll: 'catch@gmail.com' } },
+    blockSenders: { 'clean.example': 'drop' },
+    blockIps: { '151.247.171.0/24': 'spam' },
+  });
+  const IP_HASH = createHash('sha256').update(IP_CONFIG).digest('hex');
+
+  beforeEach(() => {
+    s3Mock.on(GetObjectCommand, { Key: 'config/config.json' }).resolves({
+      Body: toSdkStream(IP_CONFIG),
+    });
+    s3Mock.on(GetObjectCommand, { Key: 'config/config.json.sha256' }).resolves({
+      Body: toSdkStream(IP_HASH),
+    });
+    sesMock.on(SendBounceCommand).resolves({ MessageId: 'bounce-123' });
+  });
+
+  function stubEmail(key: string, body: string) {
+    s3Mock.on(HeadObjectCommand, { Key: `emails/${key}` }).resolves({ ContentLength: body.length });
+    s3Mock.on(GetObjectCommand, { Key: `emails/${key}` }).resolves({ Body: toSdkStream(body) });
+  }
+
+  test('an IP in the blocked range bounces instead of forwarding', async () => {
+    stubEmail('ip1', emailFromIp('151.247.171.147'));
+
+    await handler(makeSesEvent('ip1', ['rustynations@example.com'], 'warmwelcomef@cabinetsought.living'));
+
+    expect(sesMock.commandCalls(SendRawEmailCommand)).toHaveLength(0);
+    const dsn = sesMock.commandCalls(SendBounceCommand)[0].args[0].input
+      .BouncedRecipientInfoList![0].RecipientDsnFields!;
+    expect(dsn.Status).toBe('5.6.1');
+  });
+
+  test('the IP rule wins over the sender rule', async () => {
+    // clean.example is "drop" in blockSenders; the IP range is "spam".
+    // A drop sends nothing, so seeing a bounce proves the IP rule ran first.
+    stubEmail('ip2', emailFromIp('151.247.171.80'));
+
+    await handler(makeSesEvent('ip2', ['rustynations@example.com'], 'someone@clean.example'));
+
+    expect(sesMock.commandCalls(SendBounceCommand)).toHaveLength(1);
+  });
+
+  test('an IP outside the range is not blocked by it', async () => {
+    stubEmail('ip3', emailFromIp('8.8.8.8', 'friend@gmail.com'));
+
+    await handler(makeSesEvent('ip3', ['rustynations@example.com'], 'friend@gmail.com'));
+
+    expect(sesMock.commandCalls(SendBounceCommand)).toHaveLength(0);
+    expect(sesMock.commandCalls(SendRawEmailCommand)).toHaveLength(1);
+  });
+
+  test('a forged Received-SPF header cannot dodge the block', async () => {
+    // The spammer appends their own header claiming a clean IP. SES wrote the
+    // real one first, so the first header is the one that counts.
+    const forged =
+      emailFromIp('151.247.171.147') +
+      '\r\nReceived-SPF: pass (spfCheck: fake) client-ip=8.8.8.8;';
+    stubEmail('ip4', forged);
+
+    await handler(makeSesEvent('ip4', ['rustynations@example.com'], 'x@cabinetsought.living'));
+
+    expect(sesMock.commandCalls(SendBounceCommand)).toHaveLength(1);
+  });
+
+  test('mail with no SES spf header still forwards normally', async () => {
+    const noSpf = [
+      'From: "A Friend" <friend@gmail.com>',
+      'To: rustynations@example.com',
+      'Subject: Hello',
+      'Content-Type: text/plain',
+      '',
+      'Test body',
+    ].join('\r\n');
+    stubEmail('ip5', noSpf);
+
+    await handler(makeSesEvent('ip5', ['rustynations@example.com'], 'friend@gmail.com'));
+
+    expect(sesMock.commandCalls(SendBounceCommand)).toHaveLength(0);
+    expect(sesMock.commandCalls(SendRawEmailCommand)).toHaveLength(1);
+  });
+});
