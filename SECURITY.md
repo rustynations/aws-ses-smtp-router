@@ -49,9 +49,9 @@ This prevents unhandled TypeError crashes from malformed events.
 
 The Lambda verifies `config.json` integrity at runtime by comparing its SHA-256 hash against a co-deployed `config.json.sha256` file in S3. If the hash doesn't match or the hash file is missing, the Lambda throws and the email routes to the DLQ (triggering the DLQ depth alarm).
 
-**Deploy flow:** A `predeploy` npm hook auto-generates the hash file. CDK `BucketDeployment` uploads both `config.json` and `config.json.sha256` together, keeping them in sync.
+**Deploy flow:** `bin/aws-ses-smtp-router-infra.ts` writes the hash file at synth time, from the raw bytes it just read and validated. CDK `BucketDeployment` then uploads `config.json` and `config.json.sha256` together, keeping them in sync. There is no npm hook and no separate hash script.
 
-**Config changes:** Always use `cdk deploy` for config changes — it regenerates the hash automatically. Manual S3 uploads are possible but require uploading both the config and a matching hash file.
+**Config changes:** `cdk deploy` is the default — it validates the config and regenerates the hash before anything reaches S3. A manual S3 upload also works, but you must upload the config **and** a matching hash file; the Lambda trims the hash before comparing, so `shasum -a 256 config.json | awk '{print $1}'` is enough to produce it. Uploading the config alone rejects all mail until the hash catches up.
 
 ## Dead Letter Queue
 

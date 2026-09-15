@@ -136,8 +136,7 @@ The `X-Original-To` header is useful for setting up Gmail filters per recipient 
 | `npm run build` | Compile TypeScript |
 | `npm run watch` | Watch and compile on changes |
 | `npm run test` | Run tests |
-| `npm run hash-config` | Regenerate config.json.sha256 (runs automatically on deploy) |
-| `npx cdk deploy` | Deploy stack |
+| `npx cdk deploy` | Deploy stack (regenerates config.json.sha256 at synth) |
 | `npx cdk diff` | Preview changes |
 | `npx cdk synth` | Emit CloudFormation template |
 | `npx cdk destroy` | Tear down stack |
